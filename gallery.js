@@ -1,13 +1,16 @@
 (function () {
     'use strict';
 
-    // 1. Добавляем стили для галереи (горизонтальные картинки)
+    // Стили для горизонтальных картинок
     function addGalleryStyles() {
+        // Убрал лишние отступы и добавил стили для фокуса
         var css = 
-            '.gallery-line .gallery-item { width: 300px; display: inline-block; position: relative; margin-right: 1.2em; vertical-align: top; }' +
-            '.gallery-line .gallery-item .card__view { padding-bottom: 56.25%; background: #000; border-radius: 0.5em; overflow: hidden; position: relative; }' +
+            '.gallery-line { margin-top: 1.5em; margin-bottom: 1em; }' + // Отступы сверху/снизу
+            '.gallery-line .gallery-item { width: 220px; display: inline-block; position: relative; margin-right: 1em; border-radius: 0.5em; overflow: hidden; transition: transform 0.2s; }' +
+            '.gallery-line .gallery-item.focus { transform: scale(1.1); box-shadow: 0 0 10px rgba(0,0,0,0.5); z-index: 10; border: 2px solid #fff; }' + // Стиль фокуса
+            '.gallery-line .card__view { padding-bottom: 56.25%; background: #222; position: relative; }' +
             '.gallery-line .gallery-item img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }' +
-            '.gallery-line .category-full__items { white-space: nowrap; overflow-x: auto; padding-top: 1em; }';
+            '.gallery-line .category-full__items { white-space: nowrap; overflow-x: auto; padding: 1em 0; scroll-behavior: smooth; }';
         
         var style = document.createElement('style');
         style.type = 'text/css';
@@ -26,7 +29,6 @@
             var type = (card.name && !card.title) ? 'tv' : 'movie';
             if(card.first_air_date) type = 'tv';
 
-            // Запрашиваем картинки (Backdrops)
             var tmdb_url = type + '/' + card.id + '/images?include_image_language=ru,en,null';
 
             Lampa.Api.sources.tmdb.get(tmdb_url, {}, function (json) {
@@ -34,15 +36,16 @@
                     renderManualLine(json.backdrops, container);
                 }
             }, function (error) {
-                console.log('Gallery error', error);
+                // Ошибки игнорируем
             });
         }
 
         function renderManualLine(images, container) {
-            var limit = 20;
+            // ЛИМИТ: 10 штук
+            var limit = 10;
             var sliced = images.slice(0, limit);
             
-            // Создаем структуру HTML вручную (в стиле Lampa), чтобы работала навигация
+            // HTML структура, совместимая с контроллером Lampa
             var lineHtml = $(
                 '<div class="category-full gallery-line">' +
                     '<div class="category-full__head">' +
@@ -54,40 +57,55 @@
 
             var itemsContainer = lineHtml.find('.category-full__items');
 
-            // Подготовка списка для галереи (полный размер)
             var galleryObjects = sliced.map(function(img) {
                 return { src: 'https://image.tmdb.org/t/p/original' + img.file_path };
             });
 
-            // Генерация карточек
             sliced.forEach(function(img, index) {
                 var imgUrl = 'https://image.tmdb.org/t/p/w500' + img.file_path;
                 
-                // Класс 'selector' обязателен, чтобы пульт мог выбрать этот элемент
+                // Добавляем класс 'selector', чтобы джойстик видел элемент
                 var item = $(
-                    '<div class="card selector gallery-item">' +
+                    '<div class="gallery-item selector" tabindex="0">' + 
                         '<div class="card__view">' +
                             '<img src="' + imgUrl + '" />' +
                         '</div>' +
                     '</div>'
                 );
 
-                // Обработка клика (Enter)
+                // Обработка клика / нажатия OK
                 item.on('hover:enter click', function() {
-                    Lampa.Gallery.open(galleryObjects, index);
+                    // ЗАЩИТА: Проверяем, существует ли галерея в этой версии Lampa
+                    if (Lampa.Gallery && typeof Lampa.Gallery.open === 'function') {
+                        Lampa.Gallery.open(galleryObjects, index);
+                    } else {
+                        // Если галереи нет, выводим уведомление (если возможно) или просто ничего не делаем, чтобы не крашилось
+                        Lampa.Noty.show('Галерея недоступна в вашей версии');
+                    }
                 });
 
                 itemsContainer.append(item);
             });
 
-            // Вставляем линию в интерфейс
-            var target = $(container).find('.full-start-new__details');
+            // ПОЗИЦИЯ: Вставляем ПОСЛЕ описания (.full-start-new__description)
+            // Это опустит галерею ниже кнопок и текста
+            var target = $(container).find('.full-start-new__description');
+            
+            // Если описания нет, ищем блок кнопок как резерв
             if (target.length === 0) target = $(container).find('.full-start__buttons');
             
+            // Если и этого нет, ищем details
+            if (target.length === 0) target = $(container).find('.full-start-new__details');
+
             target.after(lineHtml);
 
-            // Важный хак: просим контроллер Lampa пересчитать навигацию, чтобы он "увидел" новые кнопки
-            if (Lampa.Controller.toggle) Lampa.Controller.toggle('content');
+            // ВАЖНО ДЛЯ ДЖОЙСТИКА:
+            // Даем браузеру время отрисовать картинки, затем просим Lampa обновить навигацию
+            setTimeout(function() {
+                if (Lampa.Controller && Lampa.Controller.toggle) {
+                    Lampa.Controller.toggle('content');
+                }
+            }, 500);
         }
 
         Lampa.Listener.follow('full', function (e) {
@@ -95,7 +113,7 @@
                 if (e.data && e.data.movie && e.data.movie.id) {
                     var render = e.object.activity.render();
                     getImages(e.data.movie, render);
-                }
+                
             }
         });
     }
@@ -104,4 +122,4 @@
         window.plugin_gallery_loaded = true;
         galleryPlugin();
     }
-})();
+})();≈
