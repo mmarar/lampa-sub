@@ -1,13 +1,13 @@
 (function () {
     'use strict';
 
-    // 1. Внедряем CSS стили для правильного отображения горизонтальных картинок (16:9)
-    // Без этого Lampa сплющит их как постеры.
+    // 1. Добавляем стили для галереи (горизонтальные картинки)
     function addGalleryStyles() {
         var css = 
-            '.gallery-line .card__img { padding-bottom: 56.25% !important; background-color: #000; }' + // Делаем контейнер 16:9
-            '.gallery-line .card__view { padding-bottom: 56.25% !important; }' +
-            '.gallery-line .card__title { display: none; }'; // Скрываем пустой заголовок
+            '.gallery-line .gallery-item { width: 300px; display: inline-block; position: relative; margin-right: 1.2em; vertical-align: top; }' +
+            '.gallery-line .gallery-item .card__view { padding-bottom: 56.25%; background: #000; border-radius: 0.5em; overflow: hidden; position: relative; }' +
+            '.gallery-line .gallery-item img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }' +
+            '.gallery-line .category-full__items { white-space: nowrap; overflow-x: auto; padding-top: 1em; }';
         
         var style = document.createElement('style');
         style.type = 'text/css';
@@ -20,84 +20,78 @@
     }
 
     function galleryPlugin() {
-        // Запускаем стили
         addGalleryStyles();
 
         function getImages(card, container) {
-            // Определяем тип (фильм или сериал)
             var type = (card.name && !card.title) ? 'tv' : 'movie';
-            // Если есть дата выхода сериала, уточняем
             if(card.first_air_date) type = 'tv';
 
+            // Запрашиваем картинки (Backdrops)
             var tmdb_url = type + '/' + card.id + '/images?include_image_language=ru,en,null';
 
-            // Используем встроенный метод запроса Lampa
             Lampa.Api.sources.tmdb.get(tmdb_url, {}, function (json) {
                 if (json && json.backdrops && json.backdrops.length > 0) {
-                    renderLine(json.backdrops, container);
+                    renderManualLine(json.backdrops, container);
                 }
             }, function (error) {
-                // Ошибки тихо игнорируем, чтобы не спамить в консоль ТВ
+                console.log('Gallery error', error);
             });
         }
 
-        function renderLine(images, container) {
-            // Берем первые 20 картинок, чтобы не забить память ТВ
-            var limitedImages = images.slice(0, 20);
-
-            // Преобразуем для Lampa
-            var results = limitedImages.map(function (img) {
-                return {
-                    // w500 - оптимально для ленты на ТВ (не мыло, но и не 4k)
-                    img: 'https://image.tmdb.org/t/p/w500' + img.file_path,
-                    // original - для открытия на весь экран
-                    original: 'https://image.tmdb.org/t/p/original' + img.file_path,
-                    title: '', // Названия нет
-                    url: '',   // Ссылки перехода нет, мы перехватим клик
-                    ready: true // Говорим Lampa, что данные готовы
-                };
-            });
-
-            // Создаем линию
-            var line = new Lampa.Line({
-                title: 'Галерея',
-                results: results,
-                card_events: {
-                    onEnter: function (item, element) {
-                        // При клике открываем встроенную смотрелку фото
-                        var galleryItems = results.map(function(i){
-                            return { src: i.original };
-                        });
-                        
-                        // Ищем индекс нажатой картинки
-                        var index = results.indexOf(item);
-                        if (index < 0) index = 0;
-
-                        Lampa.Gallery.open(galleryItems, index);
-                    }
-                }
-            });
-
-            var renderedLine = line.render();
+        function renderManualLine(images, container) {
+            var limit = 20;
+            var sliced = images.slice(0, limit);
             
-            // Добавляем класс, к которому мы привязали CSS выше
-            renderedLine.addClass('gallery-line');
+            // Создаем структуру HTML вручную (в стиле Lampa), чтобы работала навигация
+            var lineHtml = $(
+                '<div class="category-full gallery-line">' +
+                    '<div class="category-full__head">' +
+                        '<div class="category-full__title">Галерея</div>' +
+                    '</div>' +
+                    '<div class="category-full__items"></div>' +
+                '</div>'
+            );
 
-            // Вставляем ПОСЛЕ блока с кнопками и описанием
-            // Обычно это класс .full-start-new__details или .full-start__buttons
+            var itemsContainer = lineHtml.find('.category-full__items');
+
+            // Подготовка списка для галереи (полный размер)
+            var galleryObjects = sliced.map(function(img) {
+                return { src: 'https://image.tmdb.org/t/p/original' + img.file_path };
+            });
+
+            // Генерация карточек
+            sliced.forEach(function(img, index) {
+                var imgUrl = 'https://image.tmdb.org/t/p/w500' + img.file_path;
+                
+                // Класс 'selector' обязателен, чтобы пульт мог выбрать этот элемент
+                var item = $(
+                    '<div class="card selector gallery-item">' +
+                        '<div class="card__view">' +
+                            '<img src="' + imgUrl + '" />' +
+                        '</div>' +
+                    '</div>'
+                );
+
+                // Обработка клика (Enter)
+                item.on('hover:enter click', function() {
+                    Lampa.Gallery.open(galleryObjects, index);
+                });
+
+                itemsContainer.append(item);
+            });
+
+            // Вставляем линию в интерфейс
             var target = $(container).find('.full-start-new__details');
             if (target.length === 0) target = $(container).find('.full-start__buttons');
             
-            target.after(renderedLine);
-            
-            // Запускаем ленивую загрузку картинок
-            line.start();
+            target.after(lineHtml);
+
+            // Важный хак: просим контроллер Lampa пересчитать навигацию, чтобы он "увидел" новые кнопки
+            if (Lampa.Controller.toggle) Lampa.Controller.toggle('content');
         }
 
-        // Слушаем открытие карточки
         Lampa.Listener.follow('full', function (e) {
             if (e.type == 'complite') {
-                // Проверяем, что это фильм/сериал, а не что-то другое
                 if (e.data && e.data.movie && e.data.movie.id) {
                     var render = e.object.activity.render();
                     getImages(e.data.movie, render);
